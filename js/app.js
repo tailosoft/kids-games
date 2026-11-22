@@ -113,43 +113,51 @@ function renderMenu() {
     ]);
   }));
 
-  const foot = h('div', { class: 'menu__foot' }, [
-    h('button', { class: 'ghost', type: 'button', onClick: () => { location.hash = '#/settings'; } }, [
-      icon('gear'),
-      h('span', { text: t('menu.settings', lang) }),
+  /* Grown-up controls live together in the header, out of the way of the
+     tiles: the child's half of the screen is the tiles and nothing else. */
+  const acts = h('div', { class: 'menu__acts' }, [
+    h('button', {
+      class: 'chip',
+      type: 'button',
+      onClick: () => { location.hash = '#/profiles'; },
+    }, [
+      h('span', { class: 'chip__avatar', text: profiles.active().avatar }),
+      h('span', { class: 'chip__name', text: profiles.active().name || t('profile.unnamed', lang) }),
     ]),
   ]);
 
   if (installPrompt) {
-    foot.append(h('button', {
-      class: 'ghost',
+    acts.append(h('button', {
+      class: 'icon-btn',
       'data-hot': true,
       type: 'button',
+      'aria-label': t('menu.install', lang),
+      title: t('menu.install', lang),
       onClick: async () => {
         const prompt = installPrompt;
         installPrompt = null;
         await prompt.prompt();
         renderMenu();
       },
-    }, [icon('plus'), h('span', { text: t('menu.install', lang) })]));
+    }, [icon('plus')]));
   }
+
+  acts.append(h('button', {
+    class: 'icon-btn',
+    type: 'button',
+    'aria-label': t('menu.settings', lang),
+    title: t('menu.settings', lang),
+    onClick: () => { location.hash = '#/settings'; },
+  }, [icon('gear')]));
 
   mount(h('div', { class: 'menu' }, [
     h('header', { class: 'menu__head' }, [
       h('h1', { class: 'menu__name', text: t('app.name', lang) }),
-      h('button', {
-        class: 'chip',
-        type: 'button',
-        onClick: () => { location.hash = '#/profiles'; },
-      }, [
-        h('span', { class: 'chip__avatar', text: profiles.active().avatar }),
-        h('span', { class: 'chip__name', text: profiles.active().name || t('profile.unnamed', lang) }),
-      ]),
+      acts,
     ]),
     h('p', { class: 'menu__tag', text: t('menu.tagline', lang) }),
     langbar,
     tiles,
-    foot,
   ]));
 }
 

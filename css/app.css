@@ -47,6 +47,10 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
   position:fixed;inset:0;
   display:flex;flex-direction:column;
   padding:calc(var(--safe-t) + var(--pad)) var(--pad) calc(var(--safe-b) + var(--pad));
+  /* The one scroller in the app. A screen that fits never shows it; a screen
+     that does not (a tall tile list, a short window) grows and scrolls instead
+     of clipping. The game stage is sized to the viewport and so never does. */
+  overflow-y:auto;overscroll-behavior:contain;
 }
 
 /* ---------- shared bits ---------- */
@@ -70,6 +74,7 @@ html[dir="rtl"] .eyebrow{letter-spacing:0}
 }
 .icon-btn:active{transform:scale(.92)}
 .icon-btn.is-spacer{visibility:hidden;pointer-events:none}
+.icon-btn[data-hot]{background:rgba(76,201,240,.18);color:#D9F4FF}
 .icon-btn svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
 html[dir="rtl"] [data-flip] svg{transform:scaleX(-1)}
 
@@ -87,8 +92,9 @@ html[dir="rtl"] [data-flip] svg{transform:scaleX(-1)}
 .ghost[disabled]{opacity:.45}
 
 /* ---------- menu ---------- */
-.menu{display:flex;flex-direction:column;gap:clamp(10px,2.4vw,16px);height:100%}
+.menu{display:flex;flex-direction:column;gap:clamp(10px,2.4vw,16px);min-height:100%}
 .menu__head{display:flex;align-items:center;justify-content:space-between;gap:var(--gap)}
+.menu__acts{display:flex;align-items:center;gap:8px;flex:none}
 .menu__name{
   margin:0;
   font-family:var(--display);
@@ -110,15 +116,23 @@ html[dir="rtl"] .menu__name{letter-spacing:0;font-family:var(--arabic)}
 .langbar button[aria-pressed="true"]{background:var(--paper);color:var(--ink)}
 
 .tiles{
-  display:flex;flex-direction:column;justify-content:center;
+  display:flex;flex-direction:column;
+  /* `safe`, not plain `center`: a list too tall to fit must overflow downward,
+     where it can be scrolled to. Centring it hides the first tile above the
+     top edge, out of reach of any scroll. Browsers without `safe` fall back to
+     flex-start, which is also reachable. */
+  justify-content:safe center;
   gap:clamp(8px,2vw,14px);
-  flex:1;min-height:0;
-  overflow-y:auto;-webkit-overflow-scrolling:touch;
+  /* grows with its tiles rather than squeezing them; the app scrolls instead */
+  flex:1 1 auto;
 }
 .tile{
   position:relative;
   display:flex;align-items:center;gap:var(--gap);
-  flex:1 1 auto;min-height:92px;max-height:170px;
+  /* Grows into spare height, never shrinks below its contents: a tile with
+     practice chips in it used to be squeezed by the ones around it until the
+     chips spilled out through the bottom padding. */
+  flex:1 0 auto;min-height:92px;
   padding:var(--pad);
   border-radius:var(--r-tile);
   background:var(--paper);
@@ -151,10 +165,6 @@ html[dir="rtl"] .tile__title{font-family:var(--arabic)}
 .tile__chev svg{width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
 html[dir="rtl"] .tile__chev svg{transform:scaleX(-1)}
 
-.menu__foot{display:flex;gap:10px}
-.menu__foot .ghost{flex:1;justify-content:center;white-space:nowrap}
-.menu__foot .ghost[data-hot]{flex:0 0 auto}
-
 /* ---------- marquee progress ---------- */
 .marquee{display:flex;align-items:center;gap:clamp(5px,1.6vw,9px);flex:1;justify-content:center}
 .bulb{
@@ -171,7 +181,7 @@ html[dir="rtl"] .tile__chev svg{transform:scaleX(-1)}
 
 .field{
   position:relative;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(10px,3vw,18px);
+  display:flex;flex-direction:column;align-items:center;justify-content:safe center;gap:clamp(10px,3vw,18px);
   flex:1;min-height:0;
 }
 .card{
@@ -301,7 +311,7 @@ html[dir="rtl"] .choice{font-family:var(--arabic)}
 /* ---------- celebration ---------- */
 .win{
   position:fixed;inset:0;z-index:20;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--gap);
+  display:flex;flex-direction:column;align-items:center;justify-content:safe center;gap:var(--gap);
   padding:calc(var(--safe-t) + var(--pad)) var(--pad) calc(var(--safe-b) + var(--pad));
   background:radial-gradient(90% 60% at 50% 40%,rgba(42,30,92,.97),rgba(20,14,49,.99));
   text-align:center;
@@ -386,7 +396,6 @@ html[dir="rtl"] .switch[aria-pressed="true"] .switch__track::after{translate:-26
 .bar__count{font-size:.85rem;font-weight:700;color:rgba(255,246,233,.7);font-variant-numeric:tabular-nums}
 
 /* ---------- profile chip & practice chips ---------- */
-.menu__aside{display:flex;flex-direction:column;align-items:flex-end;gap:10px;flex:none}
 .chip{
   display:inline-flex;align-items:center;gap:.5em;
   min-height:44px;padding-inline:.5em .9em;
@@ -464,13 +473,66 @@ html[dir="rtl"] .prow__name{font-family:var(--arabic)}
 }
 .note__fix{display:block;margin-top:6px;opacity:.82;font-size:.84rem}
 
+/* A landscape phone, or a short desktop window. The card is sized off vmin,
+   which a wide-and-short viewport reads as "plenty" — so it kept its portrait
+   height, the stage overflowed, and the top of it (eyebrow, bulbs, back
+   button) was clipped away. Here the card gives up the height the controls
+   cannot. */
+@media (max-height:520px){
+  :root{
+    --pad:clamp(10px,2.4vh,18px);
+    --gap:clamp(8px,2vh,14px);
+  }
+  .card{padding:clamp(6px,2.2vh,18px) clamp(10px,3vw,24px)}
+  .card__glyph{font-size:clamp(2.2rem,26vh,7rem)}
+  .verdict{min-height:1.8em;font-size:clamp(.9rem,2.6vh,1.15rem)}
+  .mic{width:clamp(62px,18vh,88px)}
+  .replay{min-height:clamp(80px,22vh,150px)}
+  .replay svg{width:clamp(38px,12vh,72px);height:clamp(38px,12vh,72px)}
+  .choice{min-height:clamp(44px,11vh,72px);font-size:clamp(1.3rem,5vh,2.2rem)}
+  /* the menu gives up its tagline and some weight so the tiles keep the room */
+  .menu__tag{display:none}
+  .menu__name{font-size:clamp(1.5rem,7vh,2.4rem)}
+  .langbar button{min-height:36px}
+  .ghost{min-height:46px}
+  .tile{min-height:68px}
+  .tile__glyph{width:clamp(40px,12vh,64px);font-size:clamp(1.5rem,6vh,2.3rem)}
+  .tile__title{font-size:clamp(1rem,3.6vh,1.35rem)}
+  .tile__sub{font-size:clamp(.72rem,2.4vh,.85rem)}
+}
+
+/* Wide and short — a landscape phone. Four tiles in one column would leave
+   three of them under the fold; two columns put them all on screen. */
+@media (min-width:560px) and (max-height:520px){
+  .tiles{
+    display:grid;grid-template-columns:repeat(2,1fr);
+    grid-auto-rows:max-content;align-content:safe center;
+  }
+  .tile{min-height:76px}
+}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
   .mic[aria-pressed="true"] .mic__ring{opacity:.7;animation:none}
 }
+
+/* Roomy viewport: the tiles stand up as cards in two columns — glyph on top,
+   the words under it. */
 @media (min-width:560px) and (min-height:620px){
-  .tiles{display:grid;grid-template-columns:repeat(2,1fr)}
-  .tile{flex-direction:column;align-items:flex-start;justify-content:flex-end}
+  /* a column, not a stretched-out wall of app */
+  .menu,.sheet{width:min(100%,980px);margin-inline:auto}
+  .langbar{align-self:start;width:min(100%,460px)}
+  .tiles{
+    display:grid;grid-template-columns:repeat(2,1fr);
+    /* `max-content`, not the `auto` default: a <button> grid item reports no
+       useful content height to an auto track, so the row came out at the
+       tile's min-height and the words spilled out of the bottom padding. */
+    grid-auto-rows:max-content;align-content:safe center;
+  }
+  .tile{
+    flex-direction:column;align-items:flex-start;justify-content:flex-start;
+    min-height:clamp(150px,26vh,200px);
+  }
   .tile__chev{display:none}
   .tile__glyph{margin-bottom:auto}
 }

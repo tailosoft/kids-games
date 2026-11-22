@@ -77,7 +77,11 @@ jobs:
           grep "const VERSION" _site/sw.js
           grep "BUILD" _site/js/version.js
 
+      # enablement turns Pages on from here, so a fresh clone of this repo
+      # deploys without anyone visiting the Settings page first.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:

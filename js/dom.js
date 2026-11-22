@@ -27,7 +27,9 @@ const PATHS = {
   speaker: '<path d="M4 9v6h3l5 4V5L7 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/>',
   skip: '<path d="M6 5l8 7-8 7"/><path d="M18 5v14"/>',
   hand: '<path d="M8 12V6.5a1.5 1.5 0 0 1 3 0V11"/><path d="M11 11V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M14 11V7.5a1.5 1.5 0 0 1 3 0V15a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5v-2l-1.4-1.4a1.5 1.5 0 0 1 2.1-2.1L8 11"/>',
-  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2m0 14v2M4.2 7.5l1.7 1M18.1 15.5l1.7 1M4.2 16.5l1.7-1M18.1 8.5l1.7-1"/>',
+  // A six-tooth outline rather than a hub with spokes: at 22px the spoked
+  // version reads as a sun, not as settings.
+  gear: '<path d="M9.3 3.0L14.7 3.0L14.0 5.4L16.7 7.0L18.5 5.2L21.1 9.8L18.7 10.4L18.7 13.6L21.1 14.2L18.5 18.8L16.7 17.0L14.0 18.6L14.7 21.0L9.3 21.0L10.0 18.6L7.3 17.0L5.5 18.8L2.9 14.2L5.3 13.6L5.3 10.4L2.9 9.8L5.5 5.2L7.3 7.0L10.0 5.4Z"/><circle cx="12" cy="12" r="2.9"/>',
   plus: '<path d="M12 6v12M6 12h12"/>',
   minus: '<path d="M6 12h12"/>',
 };
