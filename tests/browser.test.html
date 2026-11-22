@@ -1,0 +1,314 @@
+<meta charset="utf-8">
+<title>running</title>
+<!--
+  End-to-end check of the real game loop, driven through tap mode.
+  Run it with:  npm run test:browser
+-->
+<div id="app"></div>
+<script>
+  // Modules read localStorage as they load, so wipe it and reload once before
+  // any of them are imported. Otherwise the run inherits in-memory state.
+  if (location.hash !== '#clean') {
+    localStorage.clear();
+    location.replace(location.pathname + '#clean');
+  }
+
+  // A stand-in for the browser's recogniser, so the listener can be driven
+  // through sequences a real mic cannot be asked for on demand. It has to be
+  // installed before js/speech.js is imported, which is why it lives here.
+  window.SpeechRecognition = class FakeRecognition {
+    constructor() { FakeRecognition.last = this; this.started = 0; }
+    start() { this.started += 1; if (this.onstart) this.onstart(); }
+    stop() { if (this.onend) this.onend(); }
+    abort() { if (this.onend) this.onend(); }
+  };
+  // A stand-in voice: records what the app asked to say and ends immediately,
+  // so the listening games are testable and do not wait on a real engine.
+  window.spoken = [];
+  // A real utterance rejects a stand-in voice object, so stub both halves.
+  window.SpeechSynthesisUtterance = function (text) { this.text = text; };
+  Object.defineProperty(window, 'speechSynthesis', {
+    configurable: true,
+    value: {
+      getVoices: () => [{ lang: 'en-US', name: 'Test' }, { lang: 'fr-FR', name: 'Test' }],
+      speak(utterance) {
+        window.spoken.push(String(utterance.text));
+        setTimeout(() => { if (utterance.onend) utterance.onend(); }, 5);
+      },
+      cancel() {},
+    },
+  });
+
+  window.fakeResult = function (groups) {
+    return {
+      resultIndex: 0,
+      results: groups.map((group) => {
+        const result = group.texts.map((text) => ({ transcript: text }));
+        result.isFinal = !!group.final;
+        return result;
+      }),
+    };
+  };
+</script>
+<script type="module">
+import * as profiles from '../js/profiles.js';
+import * as settings from '../js/settings.js';
+import * as mastery from '../js/mastery.js';
+import { createListener } from '../js/speech.js';
+import numbers from '../js/games/say-number.js';
+import letters from '../js/games/say-letter.js';
+import hearNumber from '../js/games/hear-number.js';
+import hearLetter from '../js/games/hear-letter.js';
+
+const results = [];
+const ok = (label, pass, extra) => results.push({ label, pass: !!pass, extra: extra || '' });
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function freshProfile(name, patch) {
+  const p = profiles.create(name, null);
+  settings.set(patch);
+  return p;
+}
+
+async function run() {
+  if (location.hash !== '#clean') return;   // the reload above is about to happen
+
+  // --- profiles -------------------------------------------------------
+  ok('a first child exists by default', profiles.all().length === 1);
+  const first = profiles.active();
+  settings.set({ digits: 3, lang: 'fr' });
+  const second = freshProfile('Nour', { digits: 1, lang: 'ar' });
+  ok('settings are per child',
+     settings.get().digits === 1 && settings.lang() === 'ar');
+  profiles.setActive(first.id);
+  ok('switching back restores the other child',
+     settings.get().digits === 3 && settings.lang() === 'fr');
+  ok('values are clamped', settings.set({ goal: 999 }).goal === 30);
+  profiles.remove(second.id);
+  ok('a child can be removed', profiles.all().length === 1);
+  ok('the last child cannot be removed', profiles.remove(first.id) === false);
+
+  // --- mastery --------------------------------------------------------
+  settings.reset();
+  const easy = ['n:1'];
+  const hard = ['n:2'];
+  for (let i = 0; i < 4; i += 1) mastery.recordDone('numbers', easy, { correct: true, misses: 0, ms: 900 });
+  for (let i = 0; i < 4; i += 1) {
+    mastery.recordMiss(hard);
+    mastery.recordDone('numbers', hard, { correct: true, misses: 1, ms: 9000 });
+  }
+  let hardPicks = 0;
+  for (let i = 0; i < 400; i += 1) {
+    if (mastery.pick([1, 2], (v) => ['n:' + v]) === 2) hardPicks += 1;
+  }
+  ok('hard items come up far more often', hardPicks > 280, hardPicks + '/400');
+  const slowOnly = ['n:3'];
+  mastery.recordDone('numbers', slowOnly, { correct: true, misses: 0, ms: 30000 });
+  ok('a slow but correct answer is logged as slow',
+     profiles.stats().items['n:3'].slow === 1);
+  const spots = mastery.troubleSpots('n:', 5);
+  ok('trouble spots list the hard item first', spots.length >= 2 && spots[0].value === '2',
+     JSON.stringify(spots.map((s) => s.value)));
+
+
+  // --- the listener -----------------------------------------------------
+  function listen() {
+    const seen = { finals: [], partials: [] };
+    seen.listener = createListener({
+      lang: 'en',
+      onPartial: (text) => seen.partials.push(text),
+      onFinal: (texts) => seen.finals.push(texts),
+      onState: () => {},
+      onError: (code) => seen.error = code,
+    });
+    seen.listener.start();
+    seen.rec = window.SpeechRecognition.last;
+    return seen;
+  }
+
+  // The bug this guards: the engine shows a hypothesis, then ends the session
+  // without ever marking a result final. The number sat on screen unjudged.
+  let s1 = listen();
+  s1.rec.onresult(fakeResult([{ texts: ['42'], final: false }]));
+  s1.rec.onspeechend();
+  s1.rec.onend();
+  ok('a hypothesis shown but never finalised is still judged',
+     s1.finals.length === 1 && s1.finals[0][0] === '42', JSON.stringify(s1.finals));
+  s1.listener.destroy();
+
+  let s2 = listen();
+  s2.rec.onresult(fakeResult([{ texts: ['7'], final: false }]));
+  s2.rec.onresult(fakeResult([{ texts: ['seven', '7'], final: true }]));
+  s2.rec.onend();
+  ok('a real final is judged once, not twice',
+     s2.finals.length === 1 && s2.finals[0][0] === 'seven', JSON.stringify(s2.finals));
+  s2.listener.destroy();
+
+  let s3 = listen();
+  s3.rec.onresult(fakeResult([{ texts: ['5'], final: false }]));
+  s3.listener.stop();
+  ok('a hard stop throws the hypothesis away', s3.finals.length === 0, JSON.stringify(s3.finals));
+  s3.listener.destroy();
+
+  let s4 = listen();
+  s4.rec.onresult(fakeResult([{ texts: ['8'], final: false }]));
+  s4.listener.finish();
+  ok('releasing hold-to-talk judges what was said',
+     s4.finals.length === 1 && s4.finals[0][0] === '8', JSON.stringify(s4.finals));
+  s4.listener.destroy();
+
+  let s5 = listen();
+  s5.rec.onresult(fakeResult([{ texts: ['13'], final: false }]));
+  s5.rec.onspeechend();            // engine goes quiet and never ends the session
+  await wait(1800);
+  ok('a stalled engine does not strand the answer',
+     s5.finals.length === 1 && s5.finals[0][0] === '13', JSON.stringify(s5.finals));
+  s5.listener.destroy();
+
+  // --- the game loop, end to end --------------------------------------
+  // A brand new child, so the mastery numbers above cannot colour the results.
+  profiles.create('Tester', null);
+  settings.set({ mode: 'tap', digits: 1, goal: 3, lang: 'en', numerals: 'western' });
+  const root = document.getElementById('app');
+  const game = numbers(root);
+
+  const cardText = () => Array.from(root.querySelectorAll('.card__glyph')).map((n) => n.textContent).join(' ');
+  const choices = () => Array.from(root.querySelectorAll('.choice'));
+
+  ok('the card shows a single digit', /^[0-9]$/.test(cardText()), cardText());
+  ok('tap mode offers four answers', choices().length === 4);
+  ok('exactly one answer is right', choices().filter((b) => b.textContent === cardText()).length === 1);
+
+  // a wrong tap must not score, and must be recorded
+  const firstCard = cardText();
+  const wrongBtn = choices().find((b) => b.textContent !== firstCard);
+  wrongBtn.click();
+  await wait(60);
+  ok('a wrong tap says so', root.querySelector('.verdict[data-tone="wrong"]') !== null);
+  ok('a wrong tap lights no bulb', root.querySelectorAll('.bulb[data-on]').length === 0);
+  ok('a wrong tap is recorded', (profiles.stats().items['n:' + firstCard] || {}).miss === 1);
+
+  for (let i = 0; i < 3; i += 1) {
+    const target = cardText();
+    const right = choices().find((b) => b.textContent === target);
+    if (!right) { ok('found the right answer on card ' + i, false, target); break; }
+    right.click();
+    await wait(1000);
+  }
+
+  ok('three right answers win the game', root.querySelector('.win') !== null);
+  ok('the celebration says Youpi', (root.querySelector('.win__title') || {}).textContent === 'Youpi!');
+  // Cards can repeat, so count answers rather than distinct numbers.
+  const answers = Object.keys(profiles.stats().items)
+    .filter((k) => k.startsWith('n:'))
+    .reduce((sum, k) => sum + profiles.stats().items[k].n, 0);
+  ok('every card answered was recorded', answers === 3, answers + ' answers');
+
+  root.querySelector('.win__acts .btn').click();   // play again
+  await wait(60);
+  ok('play again clears the board',
+     root.querySelector('.win') === null && root.querySelectorAll('.bulb[data-on]').length === 0);
+  game.destroy();
+
+  // --- letters, including Arabic sequences ----------------------------
+  root.innerHTML = '';
+  settings.set({ mode: 'tap', letters: 3, goal: 3, lang: 'ar' });
+  const arabic = letters(root);
+  const tiles = root.querySelectorAll('.card__glyph');
+  ok('three Arabic letters on the card', tiles.length === 3, Array.from(tiles).map((t) => t.textContent).join(''));
+  ok('Arabic letters are Arabic', /^[ء-ي]$/.test(tiles[0].textContent), tiles[0].textContent);
+  ok('the prompt is in Arabic', root.querySelector('.eyebrow').textContent === 'قُل هذه الحروف',
+     root.querySelector('.eyebrow').textContent);
+  arabic.destroy();
+
+  // --- letter sounds (phonics mode) ------------------------------------
+  root.innerHTML = '';
+  profiles.create('Phonics', null);
+  settings.set({ mode: 'tap', letters: 1, goal: 3, lang: 'en', letterMode: 'sound' });
+  const phonics = letters(root);
+  ok('the sound prompt replaces the name prompt',
+     root.querySelector('.eyebrow').textContent === 'Say this letter\u2019s sound',
+     root.querySelector('.eyebrow').textContent);
+  const shown = root.querySelector('.card__glyph').textContent;
+  choices().find((b) => b.textContent !== shown).click();
+  await wait(60);
+  ok('sounds are tracked apart from names',
+     Object.keys(profiles.stats().items).some((k) => k === 's:' + shown),
+     Object.keys(profiles.stats().items).join(','));
+  phonics.destroy();
+
+  // --- listening games: the app says it, the child taps it ------------
+  root.innerHTML = '';
+  profiles.create('Listener', null);
+  settings.set({ digits: 1, goal: 3, options: 6, lang: 'en', numerals: 'western' });
+  window.spoken = [];
+  const hn = hearNumber(root);
+  await wait(500);
+
+  ok('the listening card shows no answer', root.querySelectorAll('.card__glyph').length === 0);
+  ok('the card is a replay button', root.querySelector('.replay') !== null);
+  ok('there is no voice/tap toggle to confuse things',
+     root.querySelector('.icon-btn.is-spacer') !== null);
+  ok('six answers to choose from', choices().length === 6, String(choices().length));
+  ok('the app says the card by itself', window.spoken.length === 1, JSON.stringify(window.spoken));
+
+  const said = window.spoken[window.spoken.length - 1];
+  ok('what it said is one of the answers',
+     choices().some((b) => b.textContent === said), said + ' / ' + choices().map((b) => b.textContent).join(','));
+
+  root.querySelector('.replay').click();
+  await wait(60);
+  ok('the replay button says it again', window.spoken.length === 2, String(window.spoken.length));
+
+  choices().find((b) => b.textContent === said).click();
+  await wait(80);
+  ok('tapping what it said scores', root.querySelectorAll('.bulb[data-on]').length === 1);
+  ok('hearing is tracked apart from saying',
+     Object.keys(profiles.stats().items).some((k) => k === 'hn:' + said),
+     Object.keys(profiles.stats().items).join(','));
+  hn.destroy();
+
+  root.innerHTML = '';
+  settings.set({ options: 4, letterMode: 'name' });
+  window.spoken = [];
+  const hl = hearLetter(root);
+  await wait(500);
+  ok('the answer count follows the setting', choices().length === 4, String(choices().length));
+  ok('the letter prompt asks which letter',
+     root.querySelector('.eyebrow').textContent === 'Which letter was that?',
+     root.querySelector('.eyebrow').textContent);
+  ok('it names the letter it is asking for',
+     choices().some((b) => b.textContent === window.spoken[0]),
+     window.spoken[0] + ' / ' + choices().map((b) => b.textContent).join(','));
+  hl.destroy();
+
+  root.innerHTML = '';
+  settings.set({ letterMode: 'sound' });
+  window.spoken = [];
+  const hls = hearLetter(root);
+  await wait(500);
+  // English letter names are the single character; a sound never is.
+  const played = window.spoken[0] || '';
+  ok('in sound mode it plays the sound, not the name',
+     played.length > 1 && !choices().some((b) => b.textContent === played),
+     JSON.stringify(window.spoken) + ' / ' + choices().map((b) => b.textContent).join(','));
+  ok('the sound prompt asks which letter makes it',
+     root.querySelector('.eyebrow').textContent === 'Which letter makes that sound?',
+     root.querySelector('.eyebrow').textContent);
+  hls.destroy();
+
+  // --- report ---------------------------------------------------------
+  const failed = results.filter((r) => !r.pass);
+  document.title = failed.length ? 'FAIL ' + failed.length : 'PASS ' + results.length;
+  document.body.innerHTML = '<pre id="out">' + results
+    .map((r) => (r.pass ? 'ok   ' : 'FAIL ') + r.label + (r.extra ? '  [' + r.extra + ']' : ''))
+    .join('\n') + '</pre>';
+}
+
+run().catch((error) => {
+  document.title = 'ERROR';
+  const done = results.map((r) => (r.pass ? 'ok   ' : 'FAIL ') + r.label + (r.extra ? '  [' + r.extra + ']' : ''));
+  document.body.innerHTML = '<pre id="out">' + done.join('\n')
+    + '\n\n' + (error && error.stack || error) + '</pre>';
+});
+</script>

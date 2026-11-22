@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "Say It! — numbers & letters",
+  "short_name": "Say It!",
+  "description": "Show a number or a letter, the child says it out loud, the app listens and answers. English, French and Arabic.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1B1340",
+  "theme_color": "#1B1340",
+  "categories": ["education", "kids", "games"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
