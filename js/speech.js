@@ -49,6 +49,7 @@ export function createListener(opts) {
   let flushTimer = 0;
   const SILENCE_LIMIT = 8;   // ~1 minute of nothing: go back to sleep
   const FLUSH_MS = 1400;     // how long to wait for a final after speech stops
+  const QUIET_MS = 1800;     // ...or after a hypothesis stops changing
 
   /**
    * The engine does not always finalise what it showed us: it can display a
@@ -64,6 +65,13 @@ export function createListener(opts) {
     settled = true;
     lastPartial = '';
     silenceStreak = 0;
+    // The session may still be open — a quiet answer never trips the engine's
+    // endpointer, so it keeps listening. End it, and the restart in onend
+    // gives the next answer a clean session instead of one that is already
+    // settled and would ignore everything said into it.
+    if (running && rec) {
+      try { rec.stop(); } catch (_) { /* already on its way down */ }
+    }
     onFinal([text]);
   }
 
@@ -120,8 +128,17 @@ export function createListener(opts) {
       if (partial) {
         lastPartial = partial;
         onPartial(partial);
+        // Said softly, an answer reaches the recogniser but not the engine's
+        // own voice detector: onspeechstart/onspeechend never fire, so nothing
+        // else here would ever judge it. A hypothesis that stops changing is
+        // the end of the utterance. Each new partial pushes the wait back, so
+        // this only fires once the child has actually stopped.
+        clearTimeout(flushTimer);
+        flushTimer = setTimeout(flush, QUIET_MS);
       }
-      if (heard.length) {
+      // A final for an utterance already handed over is the engine catching up
+      // with a flush, not a second answer.
+      if (heard.length && !settled) {
         clearTimeout(flushTimer);
         settled = true;
         lastPartial = '';

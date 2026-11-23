@@ -165,6 +165,45 @@ async function run() {
      s5.finals.length === 1 && s5.finals[0][0] === '13', JSON.stringify(s5.finals));
   s5.listener.destroy();
 
+  // Said softly: the recogniser hears it, the engine's own voice detector does
+  // not, so no speechstart/speechend/end ever arrives. The answer used to sit
+  // on screen forever waiting for an event that was never coming.
+  let s6 = listen();
+  s6.rec.onresult(fakeResult([{ texts: ['9'], final: false }]));
+  await wait(2200);
+  ok('a quietly spoken answer is judged without the engine ending',
+     s6.finals.length === 1 && s6.finals[0][0] === '9', JSON.stringify(s6.finals));
+
+  // Judging it ends that session, because the engine is still sitting in it
+  // holding a hypothesis that has now been answered for.
+  ok('the engine is restarted after a quiet answer', s6.rec.started === 2, String(s6.rec.started));
+  s6.rec.onresult(fakeResult([{ texts: ['4'], final: true }]));
+  ok('the next answer after a quiet one still counts',
+     s6.finals.length === 2 && s6.finals[1][0] === '4', JSON.stringify(s6.finals));
+  s6.listener.destroy();
+
+  // The engine catching up with its own final for words already judged is the
+  // same answer arriving late, not a second one.
+  let s6b = listen();
+  s6b.rec.onresult(fakeResult([{ texts: ['8'], final: false }]));
+  s6b.listener.finish();
+  s6b.rec.onresult(fakeResult([{ texts: ['eight'], final: true }]));
+  ok('a late final for an answer already judged is dropped',
+     s6b.finals.length === 1 && s6b.finals[0][0] === '8', JSON.stringify(s6b.finals));
+  s6b.listener.destroy();
+
+  // A pause mid-answer must not be mistaken for the end of it.
+  let s7 = listen();
+  s7.rec.onresult(fakeResult([{ texts: ['2'], final: false }]));
+  await wait(1200);
+  s7.rec.onresult(fakeResult([{ texts: ['25'], final: false }]));
+  await wait(1200);
+  ok('a changing hypothesis is still waited on', s7.finals.length === 0, JSON.stringify(s7.finals));
+  await wait(1000);
+  ok('the whole answer is judged, not the first half',
+     s7.finals.length === 1 && s7.finals[0][0] === '25', JSON.stringify(s7.finals));
+  s7.listener.destroy();
+
   // --- the game loop, end to end --------------------------------------
   // A brand new child, so the mastery numbers above cannot colour the results.
   profiles.create('Tester', null);
