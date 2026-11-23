@@ -1,4 +1,4 @@
-import { parseSpokenNumber, matchLetters, formatNumber, normalize } from '../js/match.js';
+import { parseSpokenNumber, matchNumber, matchLetters, formatNumber, normalize } from '../js/match.js';
 import { alphabet } from '../js/alphabet.js';
 
 let pass = 0, fail = 0;
@@ -39,6 +39,36 @@ eq(parseSpokenNumber('hello', 'en'), null, 'en no number');
 eq(parseSpokenNumber('', 'en'), null, 'empty');
 // digit-by-digit must NOT pass as the whole number
 eq(parseSpokenNumber('four two', 'en') === 42, false, 'en four two is not 42');
+
+// what a recogniser hands back for a small voice: near-misses count
+eq(matchNumber(['free'], 3, 'en'), true, 'en free is three');
+eq(matchNumber(['tree'], 3, 'en'), true, 'en tree is three');
+eq(matchNumber(['for'], 4, 'en'), true, 'en for is four');
+eq(matchNumber(['fore'], 4, 'en'), true, 'en fore is four');
+eq(matchNumber(['to'], 2, 'en'), true, 'en to is two');
+eq(matchNumber(['ate'], 8, 'en'), true, 'en ate is eight');
+eq(matchNumber(['sick'], 6, 'en'), true, 'en sick is six');
+eq(matchNumber(['line'], 9, 'en'), true, 'en line is nine');
+eq(matchNumber(['sevin'], 7, 'en'), true, 'en sevin is seven');
+eq(matchNumber(['fiftin'], 15, 'en'), true, 'en fiftin is fifteen');
+eq(matchNumber(['tirty tree'], 33, 'en'), true, 'en tirty tree is 33');
+eq(matchNumber(['toi'], 3, 'fr'), true, 'fr toi is trois');
+eq(matchNumber(['nerf'], 9, 'fr'), true, 'fr nerf is neuf');
+eq(matchNumber(['karante'], 40, 'fr'), true, 'fr karante is quarante');
+eq(matchNumber(['تلاته'], 3, 'ar'), true, 'ar dialect three');
+eq(matchNumber(['تمانيه'], 8, 'ar'), true, 'ar dialect eight');
+eq(matchNumber(['تلاتين'], 30, 'ar'), true, 'ar dialect thirty');
+// ...but a near-miss never reaches across to a different number
+eq(matchNumber(['five'], 9, 'en'), false, 'en five is not nine');
+eq(matchNumber(['ine'], 9, 'en'), false, 'en ine is too ambiguous to be nine');
+eq(matchNumber(['ine'], 1, 'en'), false, 'en ine is too ambiguous to be one');
+eq(matchNumber(['fifty'], 15, 'en'), false, 'en fifty is not fifteen');
+eq(matchNumber(['fifteen'], 50, 'en'), false, 'en fifteen is not fifty');
+eq(matchNumber(['sixty'], 16, 'en'), false, 'en sixty is not sixteen');
+eq(matchNumber(['hello'], 1, 'en'), false, 'en a word is not a number');
+eq(matchNumber(['quatorze'], 40, 'fr'), false, 'fr quatorze is not quarante');
+eq(matchNumber(['ثمانين'], 8, 'ar'), false, 'ar eighty is not eight');
+eq(matchNumber(['عشرين'], 10, 'ar'), false, 'ar twenty is not ten');
 
 const pick = (lang, chars) => chars.split('').map(c => alphabet(lang).find(l => l.char === c));
 // letters, single

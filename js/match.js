@@ -97,11 +97,122 @@ function wordValue(token, lang) {
   return null;
 }
 
+/* ---------------- what the engine heard instead ---------------- */
+
+// A recogniser trained on grown-ups returns the nearest everyday word to the
+// noise a four-year-old made: "free" for three, "for" for four, "تلاته" for
+// ثلاثة. None of those is a number to the strict reading above, so a child who
+// said the right thing was told they were wrong — the single most common way
+// this app misjudges a small voice.
+//
+// Two rules below, both deliberately narrow:
+//   * a token one edit away from exactly one number word is that number;
+//   * a short list of true homophones, which are further than one edit from
+//     the word they sound like ("ate" / eight) and so are out of its reach.
+// A token that is one edit from two different numbers is thrown away, not
+// guessed: "ine" could be nine or one, and a wrong "right" teaches the wrong
+// number. Wrong answers are never snapped towards the card — the leniency
+// knows nothing about what is on screen, so it cannot flatter the child.
+
+const HOMOPHONES = {
+  en: {
+    won: 1, wun: 1,
+    to: 2, too: 2, tu: 2, do: 2,
+    free: 3, fre: 3, tri: 3,
+    sick: 6, sik: 6,
+    fore: 4, faw: 4,
+    hive: 5,
+    heaven: 7,
+    ate: 8, ait: 8, hate: 8, eat: 8,
+    nain: 9, nan: 9, nein: 9,
+    hero: 0,
+  },
+  fr: {
+    toi: 3, twa: 3,
+    kat: 4, cat: 4, katr: 4,
+    sank: 5, sang: 5, san: 5,
+    wit: 8, ouit: 8, oui: 8,
+    vin: 20,
+  },
+  ar: {},
+};
+
+// Arabic as a child actually says it: ثلاثة comes out تلاتة across much of the
+// Levant and Egypt, and the recogniser writes down what it hears. These are
+// regular swaps, so folding them costs nothing in precision — and it stays
+// inside the number reading, where ت and ث cannot be two different answers.
+// The letters game must keep them apart, so this is not done in normalize().
+const AR_FOLD = [[/ث/g, 'ت'], [/ذ/g, 'د'], [/ظ/g, 'ز'], [/ء/g, '']];
+
+function fold(text, lang) {
+  if (lang !== 'ar') return text;
+  let out = text;
+  for (const [from, to] of AR_FOLD) out = out.replace(from, to);
+  return out;
+}
+
+const FUZZ = 1;        // edits allowed against a short word
+const FUZZ_LONG = 2;   // ...and against a long one, where a syllable can slip
+const LONG = 6;        // "fifteen" is long; "five" is not
+const FUZZ_MIN = 3;    // a token shorter than this is not fuzzed at all
+
+/** Levenshtein distance, abandoned as soon as it passes `cap`. */
+function editDistance(a, b, cap) {
+  if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    const row = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      row[j] = Math.min(row[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+      if (row[j] < best) best = row[j];
+    }
+    if (best > cap) return cap + 1;
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/** The number a near-miss token stands for, or null if it is not close enough. */
+function nearValue(token, lang) {
+  const homophones = HOMOPHONES[lang] || HOMOPHONES.en;
+  if (token in homophones) return homophones[token];
+  if (token.length < FUZZ_MIN) return null;
+
+  const table = TABLES[lang] || TABLES.en;
+  const heard = fold(token, lang);
+  let best = null;
+  let bestDist = FUZZ_LONG + 1;
+  let ambiguous = false;
+  for (const key of Object.keys(table)) {
+    if (key.length < FUZZ_MIN) continue;        // "un" is one edit from far too much
+    // A long word is mangled a syllable at a time — "fiftin" for fifteen — and
+    // has room to spare: nothing else in the table is two edits from it.
+    const cap = key.length >= LONG && token.length >= FUZZ_MIN + 1 ? FUZZ_LONG : FUZZ;
+    const dist = editDistance(heard, fold(key, lang), cap);
+    if (dist > cap || dist > bestDist) continue;   // not close enough to this word
+    // Ties are only ties at the same distance: ثمانية folds onto تمانية
+    // exactly, and must not be talked out of it by ثمانين one edit further.
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = table[key];
+      ambiguous = false;
+    } else if (table[key] !== best) {
+      ambiguous = true;
+    }
+  }
+  return ambiguous ? null : best;
+}
+
 /**
  * Read a spoken number out of a transcript. Returns null when there is no
  * number in it. Handles 0–999, which is all the game asks for.
+ *
+ * `loose` also accepts the near-misses described above. The strict reading is
+ * what the tests pin down; the games ask for both.
  */
-export function parseSpokenNumber(text, lang) {
+export function parseSpokenNumber(text, lang, loose) {
   const norm = normalize(text, lang);
   if (!norm) return null;
 
@@ -118,7 +229,8 @@ export function parseSpokenNumber(text, lang) {
   let current = 0;
   let seen = false;
   for (const token of norm.split(' ')) {
-    const value = wordValue(token, lang);
+    let value = wordValue(token, lang);
+    if (value == null && loose) value = nearValue(token, lang);
     if (value == null) continue;
     seen = true;
     if (value === 100) {
@@ -138,6 +250,11 @@ export function parseSpokenNumber(text, lang) {
 export function matchNumber(transcripts, target, lang) {
   for (const text of transcripts) {
     if (parseSpokenNumber(text, lang) === target) return true;
+  }
+  // Nothing heard plainly. Read them again, allowing for a recogniser that
+  // rounded a small voice off to the nearest word it knew.
+  for (const text of transcripts) {
+    if (parseSpokenNumber(text, lang, true) === target) return true;
   }
   return false;
 }
