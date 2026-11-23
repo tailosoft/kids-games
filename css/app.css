@@ -462,6 +462,41 @@ html[dir="rtl"] .prow__name{font-family:var(--arabic)}
 .input::placeholder{color:rgba(255,246,233,.35)}
 .input:focus{outline:none;border-color:var(--sky)}
 
+/* ---------- mic check ---------- */
+.meter{
+  display:block;width:100%;height:14px;margin-bottom:.8em;
+  border-radius:var(--r-pill);background:rgba(20,14,49,.6);overflow:hidden;
+}
+.meter__fill{
+  display:block;width:0;height:100%;
+  border-radius:var(--r-pill);background:var(--lime);
+  transition:width .06s linear;
+}
+.check__heard{
+  margin:0 0 .8em;min-height:2.4em;padding:10px 14px;
+  border-radius:var(--r-tile);background:rgba(20,14,49,.5);
+  font-family:var(--display);font-size:1.15rem;font-weight:700;line-height:1.3;
+  word-break:break-word;
+}
+.facts__row,.log__row{
+  display:flex;gap:.6em;margin:0;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;line-height:1.7;
+}
+.facts__name{min-width:9em;color:rgba(255,246,233,.5)}
+.facts__value{font-weight:700}
+.log{
+  max-height:15em;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  /* newest first, so the interesting line is never the one off the bottom */
+}
+.log__at{min-width:4em;color:rgba(255,246,233,.45);font-variant-numeric:tabular-nums}
+.log__what{min-width:7em;font-weight:700}
+.log__detail{color:rgba(255,246,233,.62);word-break:break-word}
+.log__row[data-kind="error"] .log__what,
+.log__row[data-kind="stall"] .log__what,
+.log__row[data-kind="mic failed"] .log__what{color:#FFC2D8}
+.log__row[data-kind="final"] .log__what,
+.log__row[data-kind="partial"] .log__what{color:var(--lime)}
+
 /* ---------- notes ---------- */
 .notes:empty{display:none}
 .note{

@@ -306,6 +306,17 @@ function renderSettings() {
     h('span', { class: 'row__hint', text: t('set.autohear.hint', lang) }),
   ]));
 
+  // Put where a parent looks when the app "doesn't hear" the child.
+  body.append(h('div', { class: 'row' }, [
+    h('span', { class: 'row__label', text: t('set.miccheck', lang) }),
+    h('button', {
+      class: 'ghost',
+      type: 'button',
+      onClick: () => { location.hash = '#/miccheck'; },
+    }, [icon('mic'), h('span', { text: t('set.miccheck', lang) })]),
+    h('span', { class: 'row__hint', text: t('set.miccheck.hint', lang) }),
+  ]));
+
   body.append(h('button', {
     class: 'ghost',
     type: 'button',
@@ -457,15 +468,20 @@ function renderProfiles() {
 
 /* ---------------- game ---------------- */
 
-async function renderGame(game) {
+// Games and the mic check are loaded on demand and mount themselves into #app.
+async function renderModule(load) {
   const token = ++navToken;
   applyLang();
-  const module = await game.load();
+  const module = await load();
   if (token !== navToken) return;      // navigated away while loading
   if (screen && screen.destroy) screen.destroy();
   screen = null;
   clear(app);
   screen = module.default(app);
+}
+
+function renderGame(game) {
+  return renderModule(game.load);
 }
 
 /* ---------------- routing ---------------- */
@@ -475,6 +491,7 @@ function route() {
   navToken += 1;
   if (id === 'settings') return renderSettings();
   if (id === 'profiles') return renderProfiles();
+  if (id === 'miccheck') return renderModule(() => import('./miccheck.js'));
   const game = GAMES.find((entry) => entry.id === id);
   if (game) return renderGame(game);
   return renderMenu();

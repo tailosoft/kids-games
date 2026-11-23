@@ -17,11 +17,17 @@
   // through sequences a real mic cannot be asked for on demand. It has to be
   // installed before js/speech.js is imported, which is why it lives here.
   window.SpeechRecognition = class FakeRecognition {
-    constructor() { FakeRecognition.last = this; this.started = 0; }
-    start() { this.started += 1; if (this.onstart) this.onstart(); }
-    stop() { if (this.onend) this.onend(); }
-    abort() { if (this.onend) this.onend(); }
+    constructor() { FakeRecognition.last = this; FakeRecognition.built += 1; this.started = 0; }
+    // `silent` is the engine that accepts start() and then does nothing at
+    // all — no onstart, no onend, not even an error. That is the wedge the
+    // listener's watchdog exists for, and the only way to ask for it on
+    // demand. The class cannot be swapped out later: speech.js reads
+    // window.SpeechRecognition once, when it is imported.
+    start() { this.started += 1; if (FakeRecognition.silent) return; if (this.onstart) this.onstart(); }
+    stop() { if (FakeRecognition.silent) return; if (this.onend) this.onend(); }
+    abort() { if (FakeRecognition.silent) return; if (this.onend) this.onend(); }
   };
+  window.SpeechRecognition.built = 0;
   // A stand-in voice: records what the app asked to say and ends immediately,
   // so the listening games are testable and do not wait on a real engine.
   window.spoken = [];
@@ -175,19 +181,23 @@ async function run() {
      s6.finals.length === 1 && s6.finals[0][0] === '9', JSON.stringify(s6.finals));
 
   // Judging it ends that session, because the engine is still sitting in it
-  // holding a hypothesis that has now been answered for.
-  ok('the engine is restarted after a quiet answer', s6.rec.started === 2, String(s6.rec.started));
-  s6.rec.onresult(fakeResult([{ texts: ['4'], final: true }]));
+  // holding a hypothesis that has now been answered for. The next one is a
+  // brand new engine object: restarting a used one is how it wedges.
+  const s6next = window.SpeechRecognition.last;
+  ok('a quiet answer is followed by a fresh session',
+     s6next !== s6.rec && s6next.started === 1, String(s6next === s6.rec));
+  s6next.onresult(fakeResult([{ texts: ['4'], final: true }]));
   ok('the next answer after a quiet one still counts',
      s6.finals.length === 2 && s6.finals[1][0] === '4', JSON.stringify(s6.finals));
   s6.listener.destroy();
 
   // The engine catching up with its own final for words already judged is the
-  // same answer arriving late, not a second one.
+  // same answer arriving late, not a second one. Once the session has ended it
+  // cannot reach us at all: its callbacks are unhooked with it.
   let s6b = listen();
   s6b.rec.onresult(fakeResult([{ texts: ['8'], final: false }]));
   s6b.listener.finish();
-  s6b.rec.onresult(fakeResult([{ texts: ['eight'], final: true }]));
+  ok('a spent session is unhooked', s6b.rec.onresult === null, String(s6b.rec.onresult));
   ok('a late final for an answer already judged is dropped',
      s6b.finals.length === 1 && s6b.finals[0][0] === '8', JSON.stringify(s6b.finals));
   s6b.listener.destroy();
@@ -203,6 +213,24 @@ async function run() {
   ok('the whole answer is judged, not the first half',
      s7.finals.length === 1 && s7.finals[0][0] === '25', JSON.stringify(s7.finals));
   s7.listener.destroy();
+
+  // The failure a parent sees as "it doesn't hear my child": start() is
+  // accepted, the engine never opens the mic and never ends the session, and
+  // the app sits there glowing. Nothing above would ever notice.
+  window.SpeechRecognition.silent = true;
+  const builtBefore = window.SpeechRecognition.built;
+  let s8 = listen();
+  await wait(2400);
+  ok('a session that never opens is thrown away and retried',
+     window.SpeechRecognition.built > builtBefore + 1,
+     String(window.SpeechRecognition.built - builtBefore));
+  await wait(5000);
+  ok('an engine that never opens is reported, not suffered in silence',
+     s8.error === 'stalled', String(s8.error));
+  ok('and the mic is let go rather than left glowing',
+     s8.listener.listening === false, String(s8.listener.listening));
+  s8.listener.destroy();
+  window.SpeechRecognition.silent = false;
 
   // --- the game loop, end to end --------------------------------------
   // A brand new child, so the mastery numbers above cannot colour the results.

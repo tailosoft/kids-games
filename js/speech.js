@@ -35,6 +35,8 @@ export function createListener(opts) {
   const onFinal = opts.onFinal || (() => {});
   const onError = opts.onError || (() => {});
   const onState = opts.onState || (() => {});
+  // Every engine callback, for the mic check screen. Nothing else listens.
+  const onEvent = opts.onEvent || (() => {});
 
   let locale = LOCALE[opts.lang] || 'en-US';
   let rec = null;
@@ -42,6 +44,9 @@ export function createListener(opts) {
   let running = false;    // the engine says it is on
   let fatal = null;       // 'denied' | 'unsupported' | 'network'
   let restartTimer = 0;
+  let startGuard = 0;
+  let endGuard = 0;
+  let stalls = 0;         // sessions started that the engine never opened
   let state = 'idle';
   let silenceStreak = 0;
   let lastPartial = '';      // the hypothesis currently on screen
@@ -50,6 +55,9 @@ export function createListener(opts) {
   const SILENCE_LIMIT = 8;   // ~1 minute of nothing: go back to sleep
   const FLUSH_MS = 1400;     // how long to wait for a final after speech stops
   const QUIET_MS = 1800;     // ...or after a hypothesis stops changing
+  const OPEN_MS = 2000;      // start() to onstart: longer than this is a stall
+  const END_MS = 2500;       // stop() to onend: longer than this is a wedge
+  const STALL_LIMIT = 3;     // ...three in a row and the engine is not coming
 
   /**
    * The engine does not always finalise what it showed us: it can display a
@@ -90,17 +98,24 @@ export function createListener(opts) {
 
     r.onstart = () => {
       running = true;
+      stalls = 0;
+      clearTimeout(startGuard);
       lastPartial = '';
       settled = false;
       clearTimeout(flushTimer);
+      onEvent('start', locale);
       if (wanted) emit('listening');
     };
 
+    r.onaudiostart = () => onEvent('audiostart');
+
     r.onspeechstart = () => {
+      onEvent('speechstart');
       if (wanted) emit('hearing');
     };
 
     r.onspeechend = () => {
+      onEvent('speechend');
       if (wanted) emit('thinking');
       // If the final never comes, judge the hypothesis rather than stall.
       clearTimeout(flushTimer);
@@ -108,6 +123,7 @@ export function createListener(opts) {
     };
 
     r.onaudioend = () => {
+      onEvent('audioend');
       if (wanted && state !== 'idle') emit('thinking');
     };
 
@@ -127,6 +143,7 @@ export function createListener(opts) {
       }
       if (partial) {
         lastPartial = partial;
+        onEvent('partial', partial);
         onPartial(partial);
         // Said softly, an answer reaches the recogniser but not the engine's
         // own voice detector: onspeechstart/onspeechend never fire, so nothing
@@ -138,6 +155,7 @@ export function createListener(opts) {
       }
       // A final for an utterance already handed over is the engine catching up
       // with a flush, not a second answer.
+      if (heard.length) onEvent('final', heard.join(' | '));
       if (heard.length && !settled) {
         clearTimeout(flushTimer);
         settled = true;
@@ -149,6 +167,7 @@ export function createListener(opts) {
 
     r.onerror = (event) => {
       const code = event.error;
+      onEvent('error', code);
       if (code === 'not-allowed' || code === 'service-not-allowed') {
         fatal = 'denied';
         wanted = false;
@@ -174,10 +193,14 @@ export function createListener(opts) {
 
     r.onend = () => {
       running = false;
+      onEvent('end');
+      clearTimeout(startGuard);
+      clearTimeout(endGuard);
+      release(r);
       flush();            // may stop the mic, so it has to run before restarting
       if (wanted) {
         clearTimeout(restartTimer);
-        restartTimer = setTimeout(kick, 220);
+        restartTimer = setTimeout(kick, 160);
       } else {
         emit('idle');
       }
@@ -186,13 +209,49 @@ export function createListener(opts) {
     return r;
   }
 
+  /** Unhook a spent session so a wedged one cannot talk to us afterwards. */
+  function release(r) {
+    if (!r) return;
+    r.onstart = r.onresult = r.onerror = r.onend = null;
+    r.onaudiostart = r.onaudioend = r.onspeechstart = r.onspeechend = null;
+    if (rec === r) rec = null;
+  }
+
   function kick() {
     if (!wanted || running || !Recognition) return;
-    if (!rec) rec = build();
+    // A fresh session object every time. Restarting a used one is where the
+    // engine wedges: it accepts start(), never opens the mic, and never ends
+    // either — the app looks like it is listening to a child who is talking
+    // into nothing.
+    release(rec);
+    rec = build();
+    const mine = rec;
     try {
-      rec.start();
+      mine.start();
+      onEvent('starting');
+      clearTimeout(startGuard);
+      startGuard = setTimeout(() => {
+        if (!wanted || running || rec !== mine) return;
+        // start() was accepted and then nothing happened. Throw the session
+        // away and build another; after a few of those, say so out loud
+        // rather than leave a child talking to a dead microphone.
+        stalls += 1;
+        onEvent('stall', String(stalls));
+        try { mine.abort(); } catch (_) { /* already gone */ }
+        release(mine);
+        if (stalls >= STALL_LIMIT) {
+          stalls = 0;
+          wanted = false;
+          emit('idle');
+          onError('stalled');
+          return;
+        }
+        clearTimeout(restartTimer);
+        restartTimer = setTimeout(kick, 200);
+      }, OPEN_MS);
     } catch (_) {
-      // start() on an engine that has not finished stopping: try once more.
+      // start() on an engine that has not finished stopping: try again.
+      release(mine);
       clearTimeout(restartTimer);
       restartTimer = setTimeout(kick, 350);
     }
@@ -235,9 +294,12 @@ export function createListener(opts) {
       lastPartial = '';
       clearTimeout(flushTimer);
       clearTimeout(restartTimer);
+      clearTimeout(startGuard);
+      clearTimeout(endGuard);
       if (rec && running) {
         try { rec.abort(); } catch (_) { /* already down */ }
       }
+      release(rec);            // a wedged session must not talk to us later
       running = false;
       emit('idle');
     },
@@ -249,12 +311,30 @@ export function createListener(opts) {
     finish() {
       wanted = false;
       clearTimeout(restartTimer);
+      clearTimeout(startGuard);
       if (rec && running) {
+        const mine = rec;
         try {
-          rec.stop();
+          mine.stop();
+          // stop() asks the engine to finish and hand back what it has. An
+          // engine that never answers would leave the mic lit for ever, so
+          // after a moment we take the words we have and call it done.
+          clearTimeout(endGuard);
+          endGuard = setTimeout(() => {
+            if (rec !== mine) return;
+            onEvent('endstall');
+            flush();
+            try { mine.abort(); } catch (_) { /* gone */ }
+            release(mine);
+            running = false;
+            emit('idle');
+          }, END_MS);
         } catch (_) {
           flush();
-          try { rec.abort(); } catch (__) { /* gone */ }
+          try { mine.abort(); } catch (__) { /* gone */ }
+          release(mine);
+          running = false;
+          emit('idle');
         }
       } else {
         flush();
@@ -263,12 +343,9 @@ export function createListener(opts) {
     },
     destroy() {
       clearTimeout(flushTimer);
+      clearTimeout(endGuard);
       this.stop();
-      if (rec) {
-        rec.onstart = rec.onresult = rec.onerror = rec.onend = null;
-        rec.onaudioend = rec.onspeechstart = rec.onspeechend = null;
-        rec = null;
-      }
+      release(rec);
     },
   };
 }

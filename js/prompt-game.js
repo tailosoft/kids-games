@@ -208,6 +208,14 @@ export function createPromptGame(spec) {
         stopMic();
         return;
       }
+      if (code === 'stalled') {
+        // start() was accepted and the engine never opened the mic, three
+        // times over. Silence here is the worst outcome: the child goes on
+        // talking into a mic that glows and hears nothing.
+        note(t('mic.stalled', lang));
+        stopMic();
+        return;
+      }
       if (code === 'network') {
         // The speech service is unreachable; retrying in a loop would only
         // burn battery. Say so and hand the mic back to the child.

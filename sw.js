@@ -21,6 +21,7 @@ const SHELL = [
   'js/confetti.js',
   'js/dom.js',
   'js/prompt-game.js',
+  'js/miccheck.js',
   'js/games/say-number.js',
   'js/games/say-letter.js',
   'js/games/hear-number.js',
